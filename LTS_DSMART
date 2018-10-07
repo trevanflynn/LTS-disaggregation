@@ -1,0 +1,112 @@
+##############################################################################
+#function to disaggregate soil legacy data using the DSMART algorithm (Odgers et al., 2014).
+#the code developed by Brendon Malone was slightly modified to incorporate the caret package.
+#the outputs can be used in the original dsmartR function.
+
+#Args:
+  #covariates: RasterStack of covariates
+  #polygons: SpatialPolygonsData frame of polygons to disaggregate. Polygon names should be "POLY_NO".
+  #composition: dataframe with three columns. First column is the polygon number (corresponding
+    to the first field of the SpatialPolygonsDataFrame attribute table);
+    second column is the map unit code; third column is the soil class
+    code; fourth column is the areal proportion of the map unit the soil
+    class is assumed to occupy
+  #n: is the number of samples to draw from each polygon
+  #reals: number of realisations
+  #cpus: is the number of computation nodes
+  #sampling: is the sampling type, either "PP" (per polygon) or "AP"(by area).
+  #minrate: is the minimum sample size for "AP" sampling
+  #model: is with algorithm to use; most classification algorithm specified in caret package.
+  #param: is the parameters to optimise; use expand.grid().
+  #args: is additional arguments passed to the caret package as a list.
+  #modsamp: is they type of sampling specified in PreProcess() usefull for unbalanced classes ("down","up").
+  #file: is the name of the output maps
+#covariates are centered and scaled during data pre-processing
+
+#Returns:
+  #The models used for each realisation
+  #rasters of each realisation
+  #lookup table
+  #does not return text files of each model
+#all outputs are placed into the same folder
+#############################################################################
+
+LTS_disag<-function(covariates = NULL, polygons = NULL, composition = NULL, n=NULL, 
+                  reals = NULL,cpus=1, sampling = "PP",minrate = 0, model= NULL, 
+                  param= NULL, args = NULL,modsamp = NULL, file = NULL,){
+  library(gtools)
+  
+  beginCluster(cpus)
+  # Generate lookup table
+  lookup = as.data.frame(sort(unique(composition$soil_class)))
+  lookup$code = seq(from=1, to=nrow(lookup), by=1)
+  colnames(lookup) = c("name", "code")
+  
+  #create output repositories
+  model_lists<- vector("list", reals) #empty list 
+  dir.create("dsmartOuts/",showWarnings = F)
+  strg<- paste(getwd(),"/dsmartOuts/",sep="")
+  strm<- paste(getwd(),"/dsmartOuts/",sep="")
+  strs<- paste(getwd(),"/dsmartOuts/",sep="")
+  write.table(lookup, paste(strg,"lookup.txt",sep=""),sep=",", col.names=T,row.names=F) 
+  
+  # For area-proportional sampling, calculate polygon areas in kilometers squared
+  if(sampling == "AP"){
+    areas <- raster::area(polygons)/1e6
+    sample.rate <- n
+    number <- 0
+  }
+  
+  for (j in 1:reals){
+    # Empty data frame to store samples
+    coordF<- matrix(NA, nrow=1000, ncol=3)
+    coordF<- data.frame(coordF)
+    names(coordF)<- c("x", "y", "class")
+    cf<- 1
+    for(POLY_NO in polygons@data[,1])
+    {
+      # Subset a single polygon
+      poly = subset(polygons, polygons@data[,1]==POLY_NO)
+      coordF[cf:(cf+(n-1)),1:2] = as.data.frame(spsample(poly, n , type="random", iter=10))
+      
+      # Allocate soil classes from within map unit
+      poly.comp=subset(composition, composition$poly==POLY_NO)
+      # Draw from Dirichlet distribution
+      s=rdirichlet(1, poly.comp$probability)
+      
+      # Weighted-random sample
+      coordF$class[cf:(cf+(n-1))]=as.character(sample(poly.comp$soil_class, size=n, 
+                                                      replace=TRUE, prob=s[1,]))
+      cf<- cf+n}
+      
+    #assign coordinates
+    locs<- as.data.frame(coordF[complete.cases(coordF),])
+    coordinates(locs)<- ~ x + y 
+    
+    # Extract covariate values for the sampling locations
+    values=raster::extract(covariates,locs)
+    
+    #sample frame
+    samples = cbind(as.data.frame(values),as.data.frame(locs)[,3])  
+    names(samples)[ncol(samples)]<- "soil_class"
+    samples$soil_class<- factor(samples$soil_class)
+    
+    #Fit caret model
+    mod.fit = trainControl(method = 'none', verboseIter = T, sampling = modsamp)
+    res =train(x = samples[,-ncol(samples)], y = samples$soil_class, method= model,
+               trControl = mod.fit, tuneGrid = param, args,
+               preProcess = c('center', 'scale'))
+    model_lists[[j]]<- res
+    
+    #Capture output
+    out<-capture.output(summary(res))
+    nme<- paste(paste(paste(strg,file,sep=""),"_",j,sep=""), ".tif", sep="")
+    r1 <- clusterR(covariates, predict, args=list(res),filename=nme,format="GTiff",progress='text',
+                   overwrite=T, datatype="INT2S")}
+  
+  #Save models to file
+  save(model_lists, file = paste(paste(getwd(),"/dsmartOuts/",sep=""),"Models.RData", sep="") )
+  endCluster()
+  message(paste(paste("DSMART outputs can be located at:",getwd(), sep=" "), "/dsmartOuts/",sep="") )}
+
+#END
