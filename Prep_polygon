@@ -20,17 +20,16 @@ LTS_prep = function(gm = NULL, lts = NULL, area = NULL, from = c(1, 2, 3,4, 5, 6
   require(rgeos)
   pb <- txtProgressBar(min = 0, max=100, style=3)
   
-  #aggregate geomorphon units
-  mat = cbind(from, to)
-  gm= reclassify(gm, rcl = mat)#reclassify pixel values
-  setTxtProgressBar(pb, 5)
-  
-  #clip polygon to area of interest
+  #clip to area of interest
   if(gIsValid(area)== TRUE){
     gm = crop(gm, extent(area))
     gm= mask(gm, area)#clip polygon by area
-    
   } 
+  setTxtProgressBar(pb, 5)
+  
+  #aggregate geomorphon units
+  mat = cbind(from, to) #matrix of levels to change
+  gm= reclassify(gm, rcl = mat)#reclassify pixel values
   setTxtProgressBar(pb, 10)
   
   #convert geomorphon to polygons 
@@ -38,27 +37,49 @@ LTS_prep = function(gm = NULL, lts = NULL, area = NULL, from = c(1, 2, 3,4, 5, 6
   setTxtProgressBar(pb, 50)
   
   #overlay LTS and aggregated geomorphon polygons
-  lts.poly = raster::intersect(lts, gm.poly) #overlay
+  lts.poly = raster::intersect(gm.poly, lts) #overlay
   lts.poly@data$POLY_NO = paste(lts.poly@data$LANDTYPE, lts.poly@data[, 1], sep = '.')#create names
   lts.poly@data = as.data.frame(lts.poly@data$POLY_NO)#only one column needed in attribute
-  setTxtProgressBar(pb, 75)
-
-  #check validity
-  s = gIsValid(poly.clip)
+  colnames(lts.poly@data)[1] ="POLY_NO"
+  setTxtProgressBar(pb, 90)
   
-  #if not valid run 0.0 width buffer
-  if(s==FALSE){
-    fix = gBuffer(poly.clip, byid = TRUE, width=0)} 
-  else{fix =poly.clip} #run buffer
-  
-  fix@data = as.data.frame(poly.clip@data$POLY_NO) #make sure same data 
+  #dissolve polygons
+  lts.poly = aggregate(lts.poly, by = "POLY_NO")
   setTxtProgressBar(pb, 100)
   
-  wr = gIsValid(fix) #final check of validity
+  #return polygon
+  close(pb)
+  message("Check polygon validity via poly_valid function")
+  return(lts.poly)
+}
+#END
+
+#############################################################################
+#function to check and fix common geometric errors when overlaying landform elements and the LTS
+  #polygon: is the polygon produced by LTS_prep function
+#if polygon is invalid a new bufferd polygon will be returned
+#if polygon is valid, use polygon produced by LTS_prep
+############################################################################ 
+
+poly_valid = function(polygon){
+  require(rgeos)
+  
+  #check validity
+  s = gIsValid(polygon)
+  try(if(s == TRUE){
+    stop(message("Geometry valid: ready to disaggregate"))
+  }, silent=T)
+  
+  #if not valid run 0.0 width buffer
+  try(if(s==FALSE){
+    fix = gBuffer(polygon, byid = TRUE, width=0)
+    wr = gIsValid(fix)
+    },silent= T)#run buffer
   
   #return polygon
-  if(wr==FALSE) {message("Warning: Geometry invalid")} 
-  else{message("Geometry valid: ready to disaggregate")}
+  try(if(wr==FALSE) {message("Warning: Geometry invalid")} 
+  else{message("Geometry fixed: ready to disaggregate")}, silent = T)
+
   return(fix)
-  close(pb)
 }
+#End
