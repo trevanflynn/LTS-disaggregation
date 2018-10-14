@@ -18,7 +18,7 @@
   #minrate: is the minimum sample size for "AP" sampling
   #model: is with algorithm to use; most classification algorithm specified in caret package.
   #param: is the parameters to optimise; use expand.grid().
-  #args: is additional arguments passed to the caret package as a list.
+  #....: is additional arguments passed to the caret package as a list.
   #pre: a character vector for PreProccess() ("pca", "ica", "BoxCox").
   #modsamp: is they type of sampling specified in trainControl() usefull for unbalanced classes ("down","up").
   #file: is the name of the output maps
@@ -34,7 +34,7 @@
 
 LTS_disag<-function(covariates = NULL, polygons = NULL, composition = NULL, n=NULL, 
                   reals = NULL,cpus=1, sampling = "PP",minrate = 0, model= NULL, 
-                  param= NULL, args = NULL, pre = NULL = modsamp = NULL, file = NULL,){
+                  param= NULL, .... = NULL, pre = NULL = modsamp = NULL, file = NULL,){
   library(gtools)
   
   beginCluster(cpus)
@@ -95,7 +95,7 @@ LTS_disag<-function(covariates = NULL, polygons = NULL, composition = NULL, n=NU
     #Fit caret model
     mod.fit = trainControl(method = 'none', verboseIter = T, sampling = modsamp)
     res =train(x = samples[,-ncol(samples)], y = samples$soil_class, method= model,
-               trControl = mod.fit, tuneGrid = param, args,
+               trControl = mod.fit, tuneGrid = param, ....,
                preProcess = pre)
     model_lists[[j]]<- res
     
