@@ -34,7 +34,7 @@
 
 LTS_disag<-function(covariates = NULL, polygons = NULL, composition = NULL, n=NULL, 
                   reals = NULL,cpus=1, sampling = "PP",minrate = 0, model= NULL, 
-                  param= NULL, .... = NULL, pre = NULL = modsamp = NULL, file = NULL,){
+                  param= NULL, ..., pre = NULL = modsamp = NULL, file = NULL,){
   library(gtools)
   
   beginCluster(cpus)
@@ -95,7 +95,7 @@ LTS_disag<-function(covariates = NULL, polygons = NULL, composition = NULL, n=NU
     #Fit caret model
     mod.fit = trainControl(method = 'none', verboseIter = T, sampling = modsamp)
     res =train(x = samples[,-ncol(samples)], y = samples$soil_class, method= model,
-               trControl = mod.fit, tuneGrid = param, ....,
+               trControl = mod.fit, tuneGrid = param, ...,
                preProcess = pre)
     model_lists[[j]]<- res
     
