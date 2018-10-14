@@ -18,7 +18,7 @@
   #minrate: is the minimum sample size for "AP" sampling
   #model: is with algorithm to use; most classification algorithm specified in caret package.
   #param: is the parameters to optimise; use expand.grid().
-  #....: is additional arguments passed to the caret package as a list.
+  #....: additional arguments passed to the caret package.
   #pre: a character vector for PreProccess() ("pca", "ica", "BoxCox").
   #modsamp: is they type of sampling specified in trainControl() usefull for unbalanced classes ("down","up").
   #file: is the name of the output maps
