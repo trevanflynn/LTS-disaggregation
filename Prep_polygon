@@ -1,10 +1,12 @@
 #################################################################
 #function to aggregate geomorphon units into a five unit geomorphon and overlay it with the land type survey. The function
 also checks polygon geometry validation and corrects on a 0.0 width buffer. 
+#function may take a while for large spatial extents
 
 
   #gm: 10-unit geomorphon raster produced from the i.geomorphon add-on in GRASS-GIS or producted from http://sil.uc.edu/geom/app
   #lts: land type survey polygons, if altered from the original LTS polygons there should be a column name "LANDTYPE"
+  #area: if gm is larger than extent of area of interest will crop the polygon
   #from: is a vector of geomorphon units to be disaggregated
   #to: is a vector of units to be aggregated to
   
@@ -13,38 +15,50 @@ the from and to arguments can be changed.
 #output gives polygons ready to be run in the LTS_disag function or warns that polygon is not valid
 #################################################################
 
-LTS_prep = function(gm = NULL, lts = NULL, from = c(1, 2, 3, 5, 6, 7,8, 9, 10, 11), 
-                    to =c(5, 1, 1, 3, 3, 4, 4,5, 5, NA)) {
+LTS_prep = function(gm = NULL, lts = NULL, area = NULL, from = c(1, 2, 3,4, 5, 6, 7,8, 9, 10, 11), 
+                    to =c(5, 1, 1, 3,3, 3, 4, 4,5, 5, NA)) {
+  require(rgeos)
+  pb <- txtProgressBar(min = 0, max=100, style=3)
   
   #aggregate geomorphon units
   mat = cbind(from, to)
   gm= reclassify(gm, rcl = mat)#reclassify pixel values
+  setTxtProgressBar(pb, 5)
+  
+  #clip polygon to area of interest
+  if(gIsValid(area)== TRUE){
+    gm = crop(gm, extent(area))
+    gm= mask(gm, area)#clip polygon by area
+    
+  } 
+  setTxtProgressBar(pb, 10)
   
   #convert geomorphon to polygons 
   gm.poly = rasterToPolygons(as.factor(gm), dissolve = T)
+  setTxtProgressBar(pb, 50)
   
   #overlay LTS and aggregated geomorphon polygons
-  lts.poly = raster::intersect(lts.poly, gm.poly)
-  lts.poly@data$POLY_NO = paste(lts.poly@data[,1], lts.poly@data[, 2], sep = '.')#create names
+  lts.poly = raster::intersect(lts, gm.poly) #overlay
+  lts.poly@data$POLY_NO = paste(lts.poly@data$LANDTYPE, lts.poly@data[, 1], sep = '.')#create names
   lts.poly@data = as.data.frame(lts.poly@data$POLY_NO)#only one column needed in attribute
+  setTxtProgressBar(pb, 75)
+
+  #check validity
+  s = gIsValid(poly.clip)
   
-  #check for invalid geometry
-  s = gIsValid(lts.poly)
-  
-  #if invalid, correct using a 0.0 distance buffer
+  #if not valid run 0.0 width buffer
   if(s==FALSE){
-    fix = gBuffer(lts.poly, byid = T, width=0)} else{fix =lts.poly}
+    fix = gBuffer(poly.clip, byid = TRUE, width=0)} 
+  else{fix =poly.clip} #run buffer
   
-  #check if geometry is correct
-  wr = gIsValid(fix)
+  fix@data = as.data.frame(poly.clip@data$POLY_NO) #make sure same data 
+  setTxtProgressBar(pb, 100)
   
-  #warning message
-  if(wr==FALSE) {
-    message("Warning: Geometry invalid")} else{message("Geometry valid: ready to disaggregate")}
+  wr = gIsValid(fix) #final check of validity
   
   #return polygon
+  if(wr==FALSE) {message("Warning: Geometry invalid")} 
+  else{message("Geometry valid: ready to disaggregate")}
   return(fix)
+  close(pb)
 }
-
-#END
-
