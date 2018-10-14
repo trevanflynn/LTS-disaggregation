@@ -33,11 +33,13 @@
 #############################################################################
 
 LTS_disag<-function(covariates = NULL, polygons = NULL, composition = NULL, n=NULL, 
-                  reals = NULL,cpus=1, sampling = "PP",minrate = 0, model= NULL, 
+                  reals = NULL,cpus=1, sampling = "PP", minrate = 0, model= NULL, 
                   param= NULL, ..., pre = NULL = modsamp = NULL, file = NULL,){
-  library(gtools)
+  require(gtools)
+  requre(caret)
   
   beginCluster(cpus)
+  
   # Generate lookup table
   lookup = as.data.frame(sort(unique(composition$soil_class)))
   lookup$code = seq(from=1, to=nrow(lookup), by=1)
