@@ -1,28 +1,50 @@
 #################################################################
-#function to aggregate geomorphon units into a five unit geomorphon and overlay it with the land type survey.
-#if a different land form element classification was used, the from and to arguments can be changed.
+#function to aggregate geomorphon units into a five unit geomorphon and overlay it with the land type survey. The function
+also checks polygon geometry validation and corrects on a 0.0 width buffer. 
+
+
   #gm: 10-unit geomorphon raster produced from the i.geomorphon add-on in GRASS-GIS or producted from http://sil.uc.edu/geom/app
   #lts: land type survey polygons, if altered from the original LTS polygons there should be a column name "LANDTYPE"
   #from: is a vector of geomorphon units to be disaggregated
   #to: is a vector of units to be aggregated to
-#output gives polygons ready to be run in the LTS_disag function
+  
+#if a different land form element classification was used or if units should be aggregated based on a threshold (i.e., slope), 
+the from and to arguments can be changed.  
+#output gives polygons ready to be run in the LTS_disag function or warns that polygon is not valid
 #################################################################
 
-LTS_prep = function(gm = NULL, lts = NULL, from = c(1, 2, 3, 5, 6, 7,8, 9, 10, 11), to =c(5, 1, 1, 3, 3, 4, 4,5, 5, NA)) {
+LTS_prep = function(gm = NULL, lts = NULL, from = c(1, 2, 3, 5, 6, 7,8, 9, 10, 11), 
+                    to =c(5, 1, 1, 3, 3, 4, 4,5, 5, NA)) {
   
   #aggregate geomorphon units
   mat = cbind(from, to)
-  gm= reclassify(gm, rcl = mat) #reclassify pixel values
+  gm= reclassify(gm, rcl = mat)#reclassify pixel values
   
   #convert geomorphon to polygons 
   gm.poly = rasterToPolygons(as.factor(gm), dissolve = T)
   
   #overlay LTS and aggregated geomorphon polygons
   lts.poly = raster::intersect(lts.poly, gm.poly)
-  lts.poly@data$POLY_NO = paste(lts.poly@data$LANDTYPE, lts.poly@data[, 2], sep = '.') #create names
-  lts.poly@data = as.data.frame(lts.poly@data$POLY_NO) #only one column needed in attribute
+  lts.poly@data$POLY_NO = paste(lts.poly@data[,1], lts.poly@data[, 2], sep = '.')#create names
+  lts.poly@data = as.data.frame(lts.poly@data$POLY_NO)#only one column needed in attribute
+  
+  #check for invalid geometry
+  s = gIsValid(lts.poly)
+  
+  #if invalid, correct using a 0.0 distance buffer
+  if(s==FALSE){
+    fix = gBuffer(lts.poly, byid = T, width=0)} else{fix =lts.poly}
+  
+  #check if geometry is correct
+  wr = gIsValid(fix)
+  
+  #warning message
+  if(wr==FALSE) {
+    message("Warning: Geometry invalid")} else{message("Geometry valid: ready to disaggregate")}
   
   #return polygon
-  return(lts.poly)
+  return(fix)
 }
+
 #END
+
