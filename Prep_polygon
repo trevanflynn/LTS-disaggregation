@@ -1,18 +1,18 @@
 #################################################################
-#function to aggregate geomorphon units into a five unit geomorphon and overlay it with the land type survey. The function
-also checks polygon geometry validation and corrects on a 0.0 width buffer. 
+#function to aggregate geomorphon units into a five unit geomorphon and overlay it with the land type survey. 
 #function may take a while for large spatial extents
 
 
   #gm: 10-unit geomorphon raster produced from the i.geomorphon add-on in GRASS-GIS or producted from http://sil.uc.edu/geom/app
   #lts: land type survey polygons, if altered from the original LTS polygons there should be a column name "LANDTYPE"
   #area: if gm is larger than extent of area of interest will crop the polygon
-  #from: is a vector of geomorphon units to be disaggregated
-  #to: is a vector of units to be aggregated to
+  #from: is a vector of original geomorphon values
+  #to: is a vector of units to aggregate to
   
 #if a different land form element classification was used or if units should be aggregated based on a threshold (i.e., slope), 
 the from and to arguments can be changed.  
-#output gives polygons ready to be run in the LTS_disag function or warns that polygon is not valid
+#output gives polygons ready to be run in the LTS_disag function
+#should check polygon validity after running function
 #################################################################
 
 LTS_prep = function(gm = NULL, lts = NULL, area = NULL, from = c(1, 2, 3,4, 5, 6, 7,8, 9, 10, 11), 
@@ -55,7 +55,8 @@ LTS_prep = function(gm = NULL, lts = NULL, area = NULL, from = c(1, 2, 3,4, 5, 6
 #END
 
 #############################################################################
-#function to check and fix common geometric errors when overlaying landform elements and the LTS
+#function to check and fix common geometric errors when overlaying landform elements and the LTS. A 0.0 width buffer is used which corrects
+for common problems when converting a raster to polygon and overlaying polygons. 
   #polygon: is the polygon produced by LTS_prep function
 #if polygon is invalid a new bufferd polygon will be returned
 #if polygon is valid, use polygon produced by LTS_prep
@@ -66,14 +67,15 @@ poly_valid = function(polygon){
   
   #check validity
   s = gIsValid(polygon)
+  
   try(if(s == TRUE){
-    stop(message("Geometry valid: ready to disaggregate"))
+    stop(message("Geometry valid: ready to disaggregate")) #if valid, stop function
   }, silent=T)
   
-  #if not valid run 0.0 width buffer
+  #if invalid run 0.0 width buffer
   try(if(s==FALSE){
-    fix = gBuffer(polygon, byid = TRUE, width=0)
-    wr = gIsValid(fix)
+    fix = gBuffer(polygon, byid = TRUE, width=0) #buffer
+    wr = gIsValid(fix) #check validity
     },silent= T)#run buffer
   
   #return polygon
@@ -83,3 +85,11 @@ poly_valid = function(polygon){
   return(fix)
 }
 #End
+
+############################################################################
+#unfortunetly some land types might have a different number of landform elements than what the geomorphon algorithm predicts.
+So the values may have to be manually assigned. However, we can see the differences and then manually assign the landforms and then
+redissolving the polygon. Then assign the difference.
+
+#check which values to change
+dif = setdiff(levels(ds.poly@data[,1], levels(unique(lts_comp$map_unit)))
