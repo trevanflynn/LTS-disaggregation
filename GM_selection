@@ -1,6 +1,7 @@
 ############################################################
 #Compute cramers V value to select a geomorphon based on the probabilities in the LTS
 #code was modified from the DSMART code developed by Brendan Malone
+
   #gm = stack of geomorphon rasters to evaluate
   #polygon = LTS polygon cliped to extent of area
   #comp = composition of landform elements and probabilities in LTS (data frame same as DSMART)
@@ -9,6 +10,7 @@
   #minrate = minimum number of samples per polygon
   
 #this is experimental
+#realisations should be high enough for stable results
 ############################################################
 
 GM_select<-function(gm = NULL, polygon = NULL, 
