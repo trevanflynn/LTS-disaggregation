@@ -55,7 +55,7 @@ GM_select<-function(gm = NULL, polygon = NULL,
     locs<- as.data.frame(coordF[complete.cases(coordF),])
     coordinates(locs)<- ~ x + y  
     # Extract covariate values for the sampling locations
-    values=extract(covariates,locs)
+    values=extract(gm,locs)
     
     #sample frame
     samples = cbind(as.data.frame(values),as.data.frame(locs)[,3])  
