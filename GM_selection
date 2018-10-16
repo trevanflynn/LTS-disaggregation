@@ -1,11 +1,13 @@
 ############################################################
 #Compute cramers V value to select a geomorphon based on the probabilities in the LTS
-#code was modified from the DSMART code developed by Brendan Malone
+#code was modified from the DSMART code developed by Brendan Malone to  provide random 
+samples for each LTS polygon and determine strength of association of the landform elements
+and the LTS terrain units. 
 
   #gm = stack of geomorphon rasters to evaluate
   #polygon = LTS polygon cliped to extent of area
   #comp = composition of landform elements and probabilities in LTS (data frame same as DSMART)
-  #reals: number of iterations to average values over
+  #iter: number of iterations to average values over
   #sampling: either by polygon ("PP") or by area ("AP")
   #minrate = minimum number of samples per polygon
   
@@ -13,10 +15,20 @@
 #realisations should be high enough for stable results
 ############################################################
 
-GM_select<-function(gm = NULL, polygon = NULL, 
-                 comp= NULL, n=NULL, iter= NULL, 
-                 sampling = "PP",minrate = 0){
+GM_select<-function(covariates = NULL, polygons = NULL, 
+                composition = NULL, n=NULL, iter = NULL,
+                sampling = "PP",minrate = 0){
+  require(lsr)
+  require(plyr)
   
+  from = c(1, 2, 3,4, 5, 6, 7,8, 9, 10)
+  to = c(5, 1, 1, 3,3, 3, 4, 4,5, 5)
+  mat = cbind(from, to) #matrix of levels to change
+  gm= reclassify(gm, rcl = mat)#reclassify pixel values
+
+  #create output repositories
+  res<- vector("list", iter) #empty list 
+
   # For area-proportional sampling, calculate polygon areas in kilometers squared
   if(sampling == "AP"){
     areas <- raster::area(polygons)/1e6
@@ -24,7 +36,7 @@ GM_select<-function(gm = NULL, polygon = NULL,
     number <- 0
   }
   
-  for (j in 1:reals){
+  for (j in 1:iter){
     # Empty data frame to store samples
     coordF<- matrix(NA, nrow=1000, ncol=3)
     coordF<- data.frame(coordF)
@@ -32,6 +44,8 @@ GM_select<-function(gm = NULL, polygon = NULL,
     cf<- 1
     for(poly.id in polygons@data[,1])
     {
+      #print(poly.id)
+      
       # For area-proportional sampling, calculate number of samples to draw
       if(sampling == "AP"){
         number <- number + 1
@@ -44,20 +58,20 @@ GM_select<-function(gm = NULL, polygon = NULL,
       coordF[cf:(cf+(n-1)),1:2] = as.data.frame(spsample(poly, n , type="random", iter=10))
       
       # Allocate soil classes from within map unit
-      poly.comp=subset(comp, comp$poly==poly.id)
-      
+      poly.comp=subset(composition, composition$poly==poly.id)
       # Draw from Dirichlet distribution
       s=rdirichlet(1, poly.comp$probability)
       
       # Weighted-random sample
       coordF$class[cf:(cf+(n-1))]=sample(poly.comp$soil_class, size=n, replace=TRUE, prob=s[1,])
       cf<- cf+n}
-      
+    
     #spatial object
     locs<- as.data.frame(coordF[complete.cases(coordF),])
     coordinates(locs)<- ~ x + y  
+    
     # Extract covariate values for the sampling locations
-    values=extract(gm,locs)
+    values=raster::extract(gm,locs)
     
     #sample frame
     samples = cbind(as.data.frame(values),as.data.frame(locs)[,3])  
@@ -65,11 +79,16 @@ GM_select<-function(gm = NULL, polygon = NULL,
     samples$soil_class<- as.factor(samples$soil_class)
     
     #Fit model####
-    for(i in names(samples)){
-      res[[i]] = cramersV(x=samples[,-samples$soil_class], y = samples$soil_class)
+    for(i in names(samples[, -which(names(samples) %in% "soil_class")])){
+      res[[j]][[i]] = cramersV(table(samples[,i], y=samples$soil_class))
     }
-    model_lists[[j]]<- res[[i]]
   }
+  res = as.data.frame(res)
+  colnames(res) = reals
+  
+  res = apply(res, 1, mean)
+  res = as.data.frame(res)
+  res$gm = row.names(res)
+  res = plyr::arrange(res, res)
+  return(res)
 }
-
-#END
