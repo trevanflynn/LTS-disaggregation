@@ -1,0 +1,98 @@
+#in progress
+
+##############################################################
+#experimental
+#covariate selection for disaggregating the LTS through the Boruta algorithm
+#Uses random samples in each polygon to draw samples and select the most relavent covariates
+
+#   model: either linear (LASSO) or RF (Boruta)
+#   p: is the confidence in which to select covariates
+#   t: should tentative covariates be included in final decision
+#   ...: any other arguments passed to the Boruta algorithm
+
+#Returns a data frame with selected covariates
+
+CO_select<-function(covariates = NULL, polygons = NULL, composition = NULL, n=NULL, obsdat =NULL, factors = NULL,
+                    model =NULL, ..., iter = NULL, sampling = "PP", minrate = 0){
+  
+  require(gtools)
+  require(Boruta)
+  
+  #make sure names are correct
+  names(composition)<- c("poly", "mapunit", "soil_class", "probability")
+  
+  # Generate lookup table
+  lookup = as.data.frame(sort(unique(composition$soil_class)))
+  lookup$code = seq(from=1, to=nrow(lookup), by=1)
+  colnames(lookup) = c("name", "code")
+  
+  #get obs names same as samples
+  if(!is.null(obsdat)){names(obsdat)<- c("x", "y", "class")}
+  
+  # For area-proportional sampling, calculate polygon areas in kilometers squared
+  if(sampling == "AP"){
+    areas <- raster::area(polygons)/1e6
+    sample_rate <- n
+    number <- 0
+  }
+  
+  for (j in 1:iter){
+    # Empty data frame to store samples
+    coordF<- matrix(NA, nrow=1000, ncol=3)
+    coordF<- data.frame(coordF)
+    names(coordF)<- c("x", "y", "class")
+    cf<- 1
+    
+    for(poly.id in polygons@data[,1])
+    {
+      
+      # For area-proportional sampling, calculate number of samples to draw
+      if(sampling == "AP"){
+        number = number +1
+        n <- ceiling(areas[number]/sample_rate)
+        n = max(minrate, n)
+      }
+      
+      # Subset a single polygon
+      poly = subset(polygons, polygons@data[,1]==poly.id)
+      coordF[cf:(cf+(n-1)),1:2] = as.data.frame(spsample(poly, n , type="random", iter=10))
+      
+      # Allocate soil classes from within map unit
+      poly.comp=subset(composition, composition$poly==poly.id)
+      # Draw from Dirichlet distribution
+      s=rdirichlet(1, poly.comp$probability)
+      
+      # Weighted-random sample
+      coordF$class[cf:(cf+(n-1))]=sample(poly.comp$soil_class, size=n, replace=TRUE, prob=s[1,])
+      cf<- cf+n}
+    
+    #spatial object
+    locs<- as.data.frame(coordF[complete.cases(coordF),])
+    locs<- rbind(locs,obsdat) # bind sampled data with observed data
+    locs$num<- match(locs$class,lookup$name)
+    coordinates(locs)<- ~ x + y  
+    
+    # Extract covariate values for the sampling locations
+    values=raster::extract(covariates,locs)
+    
+    #sample frame
+    samples = cbind(as.data.frame(values),as.data.frame(locs)[,3])  
+    names(samples)[ncol(samples)]<- "soil_class"
+    samples$soil_class<- as.factor(samples$soil_class)
+    
+    #Convert designated covariates to factors
+    if(is.character(factors)){
+      fcols <- c(1:ncol(samples))[colnames(samples) %in% factors]
+      frasters <- c(1:length(names(covariates)))[names(covariates) %in% factors]
+      for(i in 1:length(fcols)){
+        samples[,fcols[i]]<-factor(samples[,fcols[i]],levels = as.character(levels(var.stack[[frasters[i]]])[[1]]$Value))
+      }}
+    
+    #Fit random forest model
+    if(model == "RF"){
+      rf =Boruta(x = samples[,-ncol(samples)], y = samples$soil_class, ...)
+      coRF = as.data.frame(matrix(rf$finalDecision, dimnames = list(names(covariates))))
+    }
+  }
+  return(coRF)
+}
