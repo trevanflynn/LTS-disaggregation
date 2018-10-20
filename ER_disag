@@ -1,0 +1,181 @@
+#Function to estimate soil erosion risk through the CORINE model using the DSMART algorithm (Odgers et al., 2014)
+#code was modified from Brendan Malone
+
+
+ER_disag<-function(covariates = NULL, polygons = NULL, composition = NULL, n=NULL, obsdat =NULL,
+                    reals=NULL, factors =NULL, sampling = "PP",minrate = 0, cpus =1,
+                   model = "rf", ..., modsamp = NULL){
+  beginCluster(cpus)
+  
+  require(gtools)
+  require(caret)
+
+  #make sure names are correct
+  names(composition)<- c("poly", "map_unit", "soil_class", "probability", "Texture", "Depth", "Stone",
+                         "FI", "BGI")
+
+  #get obs names same as samples
+  if(!is.null(obsdat)){names(obsdat)<- c("x", "y", "class")}
+  
+  #create directory
+  PSE_lists<- vector("list", reals) #empty list
+  ASE_lists = vector("list", reals)
+  
+  dir.create("dsmartOuts/",showWarnings = F)
+  dir.create("dsmartOuts/PSE",showWarnings = F)
+  dir.create("dsmartOuts/ASE",showWarnings = F)
+  strPSE<- paste(getwd(),"/dsmartOuts/PSE/",sep="")
+  strASE<- paste(getwd(),"/dsmartOuts/ASE/",sep="")
+  
+  # For area-proportional sampling, calculate polygon areas in kilometers squared
+  if(sampling == "AP"){
+    areas <- raster::area(polygons)/1e6
+    sample_rate <- n
+    number <- length(area)
+  }
+  
+  for (j in 1:reals){
+    # Empty data frame to store samples
+    coordF<- matrix(NA, nrow=1000, ncol=3)
+    coordF<- data.frame(coordF)
+    names(coordF)<- c("x", "y", "class")
+    cf<- 1
+    
+    for(poly.id in polygons@data[,1])
+    {
+      #print(poly.id)
+      
+      # For area-proportional sampling, calculate number of samples to draw
+      if(sampling == "AP"){
+        n <- ceiling(areas[1:number]/sample_rate)
+        n = max(minrate, n)
+      }
+      
+      # Subset a single polygon
+      poly = subset(polygons, polygons@data[,1]==poly.id)
+      coordF[cf:(cf+(n-1)),1:2] = as.data.frame(spsample(poly, n , type="random", iter=10))
+      
+      # Allocate soil classes from within map unit
+      poly.comp=subset(composition, composition$poly==poly.id)
+      # Draw from Dirichlet distribution
+      s=rdirichlet(1, poly.comp$probability)
+      
+      # Weighted-random sample
+      coordF$class[cf:(cf+(n-1))]=sample(poly.comp$soil_class, size=n, replace=TRUE, prob=s[1, ])
+      coordF$Texture[cf:(cf+(n-1))]=sample(poly.comp$Texture, size=n, replace=TRUE, prob=s[1, ])
+      coordF$Depth[cf:(cf+(n-1))]=sample(poly.comp$Depth, size=n, replace=TRUE, prob=s[1, ])
+      coordF$Stone=2
+      coordF$FI=4
+      coordF$BGI=2
+      cf<- cf+n}
+    #spatial object
+    locs<- as.data.frame(coordF[complete.cases(coordF),])
+    locs<- rbind(locs,obsdat)# bind sampled data with observed data
+    coordinates(locs)<- ~ x + y  
+    
+    # Extract covariate values for the sampling locations
+    values= raster::extract(covariates,locs)
+    
+    #sample frame
+    samples = cbind(as.data.frame(locs), as.data.frame(values))
+
+    #calculate depth index
+    samples$D= ifelse(samples$Depth < 250, 3, NA)
+    samples$D= ifelse(samples$Depth >= 250 & samples$Depth <750, 2, samples$D)
+    samples$D= ifelse(samples$Depth >=750, 1, samples$D)
+    
+    #calculate Soil erosivity
+    samples$SEI = samples$Texture * samples$D * samples$Stone
+    
+    samples$SEI = ifelse(samples$SEI >=0 & samples$SEI <= 3, 1, samples$SEI)
+    samples$SEI = ifelse(samples$SEI >3 & samples$SEI <= 6, 2, samples$SEI)
+    samples$SEI = ifelse(samples$SEI >6, 3, samples$SEI)
+    
+    #calculate erosivity
+    samples$EI = samples$FI * samples$BGI
+    samples$EI = ifelse(samples$EI <4, 1, samples$EI)
+    samples$EI = ifelse(samples$EI >=4 & samples$EI <=8, 2, samples$EI)
+    samples$EI = ifelse(samples$EI >8, 3, samples$EI)
+    
+    #calculate terrain index
+    samples$Terrain = ifelse(samples$Slope < 5, 1, NA)
+    samples$Terrain = ifelse(samples$Slope >=5 & samples$Slope < 15, 2, samples$Terrain)
+    samples$Terrain = ifelse(samples$Slope >=15 & samples$Slope < 30, 3, samples$Terrain)
+    samples$Terrain = ifelse(samples$Slope >=30,  4, samples$Terrain)
+    
+    #calculate potential soil erosion
+    samples$PSE = samples$SEI * samples$EI * samples$Terrain
+    
+    samples$PSE = ifelse(samples$PSE == 0, 0, samples$PSE)
+    samples$PSE = ifelse(samples$PSE > 0 & samples$PSE <=5, 1, samples$PSE)
+    samples$PSE = ifelse(samples$PSE > 5 & samples$PSE <=11, 2, samples$PSE)
+    samples$PSE = ifelse(samples$PSE > 11, 3, samples$PSE)
+    
+    #Get veg index
+    samples$Veg = samples$Land
+    samples$Veg = ifelse(samples$Veg == 1, 1, samples$Veg)
+    samples$Veg = ifelse(samples$Veg == 2, 2, samples$Veg)
+    samples$Veg = ifelse(samples$Veg == 3, 1, samples$Veg)
+    samples$Veg = ifelse(samples$Veg == 4, 1, samples$Veg)
+    
+    #calculate actual soil erosion
+    samples$ASE = ifelse(samples$Veg == 2, samples$PSE, samples$PSE)
+    samples$ASE = ifelse(samples$Veg == 1 & samples$PSE == 2, 1, samples$PSE)
+    samples$ASE = ifelse(samples$Veg == 1 & samples$PSE == 3, 2, samples$PSE)
+    
+    #calculate land use change
+    samples$SLUC = samples$PSE - samples$ASE
+    samples$PSE = factor(samples$PSE)
+    samples$ASE = factor(samples$ASE)
+    samples$SLUC = factor(samples$SLUC)
+    samples = na.omit(samples)
+    #write look up tables
+    # Generate lookup table
+    lookPSE = as.data.frame(sort(unique(samples$PSE)))
+    lookPSE$code = seq(from=1, to=nrow(lookPSE), by=1)
+    colnames(lookPSE) = c("name", "code")
+    
+    lookASE = as.data.frame(sort(unique(samples$ASE)))
+    lookASE$code = seq(from=1, to=nrow(lookPSE), by=1)
+    colnames(lookASE) = c("name", "code")
+    
+    write.table(lookPSE, paste(strPSE,"lookupPSE.txt",sep=""),sep=",", col.names=T,row.names=F)
+    write.table(lookASE, paste(strASE,"lookupASE.txt",sep=""),sep=",", col.names=T,row.names=F)
+    
+    #Convert designated covariates to factors
+    if(is.character(factors)){
+      fcols <- c(1:ncol(samples))[colnames(samples) %in% factors]
+      frasters <- c(1:length(names(covariates)))[names(covariates) %in% factors]
+      for(i in 1:length(fcols)){
+        samples[,fcols[i]]<-factor(samples[,fcols[i]],levels = as.character(levels(var.stack[[frasters[i]]])[[1]]$Value))
+      }}
+    
+    #Fit both models
+    mod.fit = trainControl(method = 'none', verboseIter = T, sampling = modsamp)
+    
+    PSE_mod =train(x = samples[,names(covariates)], y = samples$PSE, method= model,
+                   trControl = mod.fit, ...)
+    
+    ASE_mod = train(x = samples[,names(covariates)], y = samples$ASE, method= model,
+                    trControl = mod.fit, ...)
+    
+    PSE_lists[[j]]<- PSE_mod
+    ASE_lists[[j]] = ASE_mod
+    #Capture output
+    outPSE<-capture.output(summary(PSE_mod))
+    outASE = capture.output(summary(ASE_mod))
+    
+    pme<- paste(paste(paste(strPSE, "PSE",sep=""),"_",j,sep=""), ".tif", sep="")
+    r1 <- clusterR(covariates, predict, args=list(PSE_mod),filename=pme,format="GTiff",overwrite=T, datatype="INT2S")
+    
+    ame<- paste(paste(paste(strASE, "ASE",sep=""),"_",j,sep=""), ".tif", sep="")
+    r1 <- clusterR(covariates, predict, args=list(ASE_mod),filename=ame,format="GTiff",overwrite=T, datatype="INT2S")}
+  
+  #Save models to file
+  save(PSE_lists, file = paste(paste(getwd(),"/dsmartOuts/",sep=""),"PSE.RData", sep="") )
+  save(ASE_lists, file = paste(paste(getwd(),"/dsmartOuts/",sep=""),"ASE.RData", sep="") )
+  
+  endCluster()
+  message(paste(paste("DSMART outputs can be located at:",getwd(), sep=" "), "/dsmartOuts/",sep="") )
+}
+#END
