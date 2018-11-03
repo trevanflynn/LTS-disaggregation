@@ -1,0 +1,103 @@
+LTS_disag2<-function(covariates = NULL, polygons = NULL, composition = NULL, n=NULL, obsdat =NULL,
+                    model =NULL, ..., modsamp = NULL, reals = NULL, cpus=1, factors =NULL,
+                    sampling = "PP",minrate = 0){
+  beginCluster(cpus)
+  
+  require(gtools)
+  require(caret)
+  
+  #make sure names are correct
+  names(composition)<- c("poly", "mapunit", "soil_class", "probability")
+  
+  # Generate lookup table
+  lookup = as.data.frame(sort(unique(composition$soil_class)))
+  lookup$code = seq(from=1, to=nrow(lookup), by=1)
+  colnames(lookup) = c("name", "code")
+  
+  #get obs names same as samples
+  if(!is.null(obsdat)){names(obsdat)<- c("x", "y", "class")}
+  
+  #create directory
+  model_lists<- vector("list", reals) #empty list 
+  dir.create("dsmartOuts/",showWarnings = F)
+  dir.create("dsmartOuts/rasters",showWarnings = F)
+  strg<- paste(getwd(),"/dsmartOuts/rasters/",sep="")
+  write.table(lookup, paste(strg,"lookup.txt",sep=""),sep=",", col.names=T,row.names=F) 
+  
+  # For area-proportional sampling, calculate polygon areas in kilometers squared
+  if(sampling == "AP"){
+    areas <- raster::area(polygons)/1e6
+    sample_rate <- n
+    number <- length(area)
+  }
+  
+  for (j in 1:reals){
+    # Empty data frame to store samples
+    coordF<- matrix(NA, nrow=1000, ncol=3)
+    coordF<- data.frame(coordF)
+    names(coordF)<- c("x", "y", "class")
+    cf<- 1
+    
+    for(poly.id in polygons@data[,1])
+    {
+      #print(poly.id)
+      
+      # For area-proportional sampling, calculate number of samples to draw
+      if(sampling == "AP"){
+        n <- ceiling(areas[1:number]/sample_rate)
+        n = max(minrate, n)
+      }
+      
+      # Subset a single polygon
+      poly = subset(polygons, polygons@data[,1]==poly.id)
+      coordF[cf:(cf+(n-1)),1:2] = as.data.frame(spsample(poly, n , type="random", iter=10))
+      
+      # Allocate soil classes from within map unit
+      poly.comp=subset(composition, composition$poly==poly.id)
+      # Draw from Dirichlet distribution
+      s=rdirichlet(1, poly.comp$probability)
+      
+      # Weighted-random sample
+      coordF$class[cf:(cf+(n-1))]=sample(poly.comp$soil_class, size=n, replace=TRUE, prob=s[1,])
+      cf<- cf+n}
+    
+    #spatial object
+    locs<- as.data.frame(coordF[complete.cases(coordF),])
+    locs<- rbind(locs,obsdat) # bind sampled data with observed data
+    locs$num<- match(locs$class,lookup$name)
+    coordinates(locs)<- ~ x + y  
+    
+    # Extract covariate values for the sampling locations
+    values=raster::extract(covariates,locs)
+    
+    #sample frame
+    samples = cbind(as.data.frame(values),as.data.frame(locs)[,3])  
+    names(samples)[ncol(samples)]<- "soil_class"
+    
+    #Convert designated covariates to factors
+    if(is.character(factors)){
+      fcols <- c(1:ncol(samples))[colnames(samples) %in% factors]
+      frasters <- c(1:length(names(covariates)))[names(covariates) %in% factors]
+      for(i in 1:length(fcols)){
+        samples[,fcols[i]]<-factor(samples[,fcols[i]],levels = as.character(levels(var.stack[[frasters[i]]])[[1]]$Value))
+      }}
+    
+    #Fit model####
+    mod.fit = trainControl(method = 'none', verboseIter = T, sampling = modsamp, predictionBounds = c(T,T))
+    res =train(x = samples[,-ncol(samples)], y = samples$soil_class, method= model,
+               trControl = mod.fit, ...)
+    model_lists[[j]]<- res
+    
+    #Capture output
+    out<-capture.output(summary(res))
+    
+    nme<- paste(paste(paste(strg, "map",sep=""),"_",j,sep=""), ".tif", sep="")
+    r1 <- clusterR(covariates, predict, args=list(res),filename=nme,format="GTiff",overwrite=T, datatype="INT2S")
+    r2 = mean(r1)
+    }
+  
+  #Save models to file
+  save(model_lists, file = paste(paste(getwd(),"/dsmartOuts/",sep=""),"Models.RData", sep="") )
+  endCluster()
+  message(paste(paste("DSMART outputs can be located at:",getwd(), sep=" "), "/dsmartOuts/",sep="") )
+  return(r2)}
