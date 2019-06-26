@@ -1,5 +1,7 @@
 #feature selection for disaggregation through DSMART
-#implements recursive feature selection, Boruta, and Nb techniques
+#implements recursive feature selection (RF and Lm), Boruta, and Nb techniques
+#inputs are the same for the modified DSMART model
+#FS = feature selection technique (RF, lm, Br, Nb)
 
 
 LTS_FS<-function(covariates = NULL, polygons = NULL, composition = NULL, n=NULL, obsdat =NULL,
