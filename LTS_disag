@@ -80,7 +80,7 @@ LTS_disag<-function(covariates = NULL, polygons = NULL, composition = NULL, n=NU
       }
       
       # Subset a single polygon
-      poly = subset(polygons, polygons@data[,1]==poly.id)
+      poly = subset(polygons, polygons@data$LANDTYPE==poly.id)
       coordF[cf:(cf+(n-1)),1:2] = as.data.frame(spsample(poly, n , type="random", iter=10))
       
       # Allocate soil classes from within map unit
